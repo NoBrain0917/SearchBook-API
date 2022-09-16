@@ -1,216 +1,200 @@
-/*
-
-  http://localhost:3000/?book=책이름&school=학교이름&local=지역이름
-
-   _____                      __       ____              __  
-  / ___/___  ____ ___________/ /_     / __ )____  ____  / /__
-  \__ \/ _ \/ __ `/ ___/ ___/ __ \   / __  / __ \/ __ \/ //_/
- ___/ /  __/ /_/ / /  / /__/ / / /  / /_/ / /_/ / /_/ / ,<   
-/____/\___/\__,_/_/   \___/_/ /_/  /_____/\____/\____/_/|_|  
-
-Search Boooooooooooooooooooooooooooook
-                                                           
-*/
-
-const request = require("request");
+const axios = require("axios").default;
 const express = require("express");
+const cheerio = require("cheerio");
+const qs = require("qs");
+const cors = require("cors");
 const app = express();
+
 const area = {
-    '서울': 'http://reading.ssem.or.kr/',
-    '부산': 'http://reading.pen.go.kr/',
-    '대구': 'http://reading.edunavi.kr/',
-    '인천': 'http://book.ice.go.kr/',
-    '광주': 'http://book.gen.go.kr/',
-    '대전': 'http://reading.edurang.net/',
-    '울산': 'http://reading.ulsanedu.kr/',
-    '세종': 'http://reading.sje.go.kr/',
-    '경기': 'https://reading.gglec.go.kr/',
-    '강원': 'http://reading.gweduone.net/',
-    '충북': 'http://reading.cbe.go.kr/',
-    '충남': 'http://reading.edus.or.kr/',
-    '전북': 'https://reading.jbedu.kr/',
-    '전남': 'http://reading.jnei.go.kr/',
-    '경북': 'http://reading.gyo6.net/',
-    '경남': 'http://reading.gnedu.net/', 
-    '제주': 'http://reading.jje.go.kr/' //아직 지원 안함
+  서울: "http://reading.ssem.or.kr/",
+  부산: "http://reading.pen.go.kr/",
+  대구: "http://reading.edunavi.kr/",
+  인천: "http://book.ice.go.kr/",
+  광주: "http://book.gen.go.kr/",
+  대전: "http://reading.edurang.net/",
+  울산: "http://reading.ulsanedu.kr/",
+  세종: "http://reading.sje.go.kr/",
+  경기: "https://reading.gglec.go.kr/",
+  강원: "http://reading.gweduone.net/",
+  충북: "http://reading.cbe.go.kr/",
+  충남: "http://reading.edus.or.kr/",
+  전북: "https://reading.jbedu.kr/",
+  전남: "http://reading.jnei.go.kr/",
+  경북: "http://reading.gyo6.net/",
+  경남: "http://reading.gnedu.net/",
+};
+const NO_IMAGE =
+  "https://www.epasskorea.com/Public_html/Images/common/noimage.jpg";
+
+isEmptyOrNull = (str) => {
+  if (str == null) return true;
+  if (str.trim() == "") return true;
+  return false;
 };
 
-//3000포트로 서버 열기
+getSchoolFromName = async (local, name) => {
+  let option = {
+    method: "POST",
+    data: qs.stringify({
+      currentPage: 1,
+      returnUrl: "",
+      kind: 1,
+      txtSearchWord: encodeURI(name),
+      searchGbn: "",
+      selEducation: "all",
+      selSchool: "all",
+      schoolSearch: encodeURI(name),
+    }),
+    url: `${area[local]}r/newReading/search/schoolListData.jsp`,
+  };
+  let res = await axios(option);
+
+  let cookies = res.headers["set-cookie"];
+  if (!cookies) throw new Error("쿠키가 없습니다.");
+
+  let cookie = "";
+  cookies.forEach((c) => {
+    cookie += c.substring(0, c.indexOf(" ") + 1);
+  });
+  cookie = cookie.substring(0, cookie.length - 2);
+
+  if (res.data.includes("0</span>개의"))
+    throw new Error(`학교 "${name}"을(를) 찾을 수 없습니다.`);
+
+  let code = res.data.substring(
+    res.data.indexOf("javascript:selectSchool('") + 25
+  );
+  code = code.substr(0, code.indexOf("'"));
+
+  let schName = res.data.substring(
+    res.data.indexOf("javascript:selectSchool('") + 25
+  );
+  schName = schName.substring(schName.indexOf(">") + 1);
+  schName = schName.substring(0, schName.indexOf("</a>"));
+  return Promise.resolve({ name: schName, code: code, cookie: cookie });
+};
+
+setSchoolCodeSetting = async (local, code, cookie) => {
+  let option = {
+    method: "POST",
+    url: `${area[local]}/r/newReading/search/schoolCodeSetting.jsp`,
+    data: qs.stringify({
+      schoolCode: code,
+      returnUrl: "",
+      kind: 1,
+      txtSearchWord: "도서검색",
+      searchGbn: "",
+    }),
+    headers: {
+      Cookie: cookie,
+    },
+  };
+  await axios(option);
+};
+
+searchBookFromSchoolName = async (local, book, school) => {
+  let result = {};
+  try {
+    if (isEmptyOrNull(school))
+      throw new Error("학교 이름이 비어있을 순 없습니다.");
+    if (isEmptyOrNull(book)) throw new Error("책 이름이 비어있을 순 없습니다.");
+    if (!area[local])
+      throw new Error(
+        `지원하지 않는 지역입니다. 지원하는 지역: ${Object.keys(area).join(
+          ", "
+        )}`
+      );
+
+    let { code, cookie, name } = await getSchoolFromName(local, school);
+    result.schoolCode = code;
+    result.schoolName = name;
+
+    await setSchoolCodeSetting(local, code, cookie);
+
+    let option = {
+      method: "POST",
+      url: `${area[local]}r/newReading/search/schoolSearchResult.jsp`,
+      data: qs.stringify({
+        currentPage: 1,
+        controlNo: "",
+        memberSerial: "",
+        bookInfo: "",
+        boxCmd: "",
+        printCmd: "",
+        pageParamInfo: "",
+        prevPageInfo: "",
+        searchPageName: "schoolSearchForm",
+        schSchoolCode: code,
+        division1: "ALL",
+        searchCon1: encodeURI(book),
+        connect1: "A",
+        division2: "TITL",
+        searchCon2: "",
+        connect2: "A",
+        division3: "PUBL",
+        searchCon3: "",
+        dataType: "ALL",
+        lineSize: 100,
+        cbSort: "STIT",
+        division1: "ALL",
+      }),
+      headers: {
+        Cookie: cookie,
+      },
+    };
+
+    result.result = [];
+
+    let body = (await axios(option)).data;
+    if (body.includes("검색결과가 없습니다."))
+      throw new Error(`"${book}"을(를) 찾을 수 없습니다.`);
+
+    let $ = cheerio.load(body);
+    $("div.bd_list.bd_book_list.school_lib > ul").each(function (i, e) {
+      let title = $(this).find("div.bd_list_title > a > span").text().trim();
+      let writer = $(this)
+        .find("div.bd_list_writer > span.dd")
+        .text()
+        .trim()
+        .replace(/;/g, ", ");
+      let company = $(this).find("div.bd_list_company > span.dd").text().trim();
+      let callNumber = $(this).find("div.bd_list_year > span.dd").text().trim();
+      let canRental =
+        $(this).find("div.book_save > div > div").text() == "대출가능";
+      let imgUrl = $(this).find("div.book_image > img").attr("src");
+      let preview = isEmptyOrNull(imgUrl)
+        ? NO_IMAGE
+        : area[local] + imgUrl.substring(1);
+
+      result.result.push({
+        title: title,
+        writer: writer,
+        company: company,
+        callNumber: callNumber,
+        canRental: canRental,
+        previewImage: preview,
+      });
+    });
+    result.status = "success";
+  } catch (e) {
+    result.status = "fail";
+    result.result = e.message;
+  } finally {
+    return Promise.resolve(result);
+  }
+};
+
+app.use(cors());
+
 app.listen(3000, () => {
+  console.log("서버 열림");
 });
 
-//try로 안잡히는 에러 잡기
-process.on('uncaughtException', (err) => {
-    console.log(err);
+app.get("/", async (req, res) => {
+  let bookName = req.query.book;
+  let schoolName = req.query.school;
+  let localName = req.query.local;
+
+  let data = await searchBookFromSchoolName(localName, bookName, schoolName);
+  res.json(data);
 });
-
-//localhost:3000/으로 들어왔을때
-app.get("/", (req, res) => {
-
-    try {
-    	//필요한 정보들만 냠냠
-        let bookName = req.query.book;
-        let schoolName = req.query.school;
-        let localName = req.query.local;
-
-        if (area[localName] == null) {
-            res.json(createError("", "", "알맞지 않은 지역이름 입니다."));
-            return;
-        } else if(localName == "제주") {
-        	    res.json(createError("", "", "아직 제주는 지원하지 않습니다."));
-            return;
-        }
-        
-        //학교 코드 불러오기
-        request.post({
-            url: area[localName] + "r/newReading/search/schoolListData.jsp",
-            form: {
-                "currentPage": 1,
-                "returnUrl": "",
-                "selEducation": "all",
-                "selSchool": "all",
-                "schoolSearch": encodeURI(schoolName)
-            },
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36"
-            }
-        }, (err, response, body) => {
-            let schCode;
-            let schName;
-            let cookie = "";
-            try {
-                schCode = body.split("개의 학교가 검색되었습니다")[1].split("schoolCodeSetting.jsp?schoolCode=")[1].split("&")[0];
-                schName = body.split("개의 학교가 검색되었습니다")[1].split("schoolCodeSetting.jsp?schoolCode=")[1].split(">")[1].split("<")[0];
-            } catch (e) {
-                res.json(createError("", "", "학교 정보가 없습니다."));
-                return;
-            }
-
-            //쿠키 가져오기
-            let WMONID = 'WMONID=';
-            let JSESSIONID = 'JSESSIONID=';
-            request.get({
-                url: area[localName] + 'r/newReading/search/schoolCodeSetting.jsp?schoolCode=' + schCode + '&returnUrl=',
-                headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36"
-                }
-            }, (error, response, body) => {
-                try {
-                    WMONID += response.headers['set-cookie'].join("").split('WMONID=')[1].split(';')[0];
-                } catch (e) {
-                    WMONID = null;
-                }
-                
-                try {
-                    JSESSIONID += response.headers['set-cookie'].join("").split('JSESSIONID=')[1].split(';')[0];
-                } catch (e) {
-                    JSESSIONID = null;
-                }
-
-                if (JSESSIONID == null && WMONID == null) {
-                    res.json(createError(schName, schCode, "학교에 대한 쿠키값이 없습니다."));
-                    return;
-                } else if (WMONID == null && JSESSIONID != null) {
-                    cookie = JSESSIONID;
-                } else if (WMONID != null && JSESSIONID == null) {
-                    cookie = WMONID;
-                } else {
-                    cookie = JSESSIONID + "; " + WMONID;
-                }
-
-                //도서 검색
-                request.post({
-                    url: area[localName] + "r/newReading/search/schoolSearchResult.jsp",
-                    form: {
-                        "currentPage": 1,
-                        "controlNo": "",
-                        "bookInfo": "",
-                        "boxCmd": "",
-                        "printCmd": "",
-                        "pageParamInfo": "",
-                        "prevPageInfo": "",
-                        "searchPageName": "schoolSearchForm",
-                        "schSchoolCode": schCode,
-                        "division1": "ALL",
-                        "searchCon1": encodeURI(bookName),
-                        "connect1": "A",
-                        "division2": "TITL",
-                        "searchCon2": "",
-                        "connect2": "A",
-                        "division3": "PUBL",
-                        "searchCon3": "",
-                        "dataType": "ALL",
-                        "lineSize": 10,
-                        "division1": "ALL"
-                    },
-                    headers: {
-                        "Cookie": cookie,
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36",
-                    }
-                }, (err1, response1, body1) => {
-
-                    let schBook = String(body1).replace(/\"/g, "").replace(/\n/g, "").replace(/&nbsp;/g, "").replace(/>/g, "");
-
-                    //보기 좋게 json처리
-                    let bookInfo = {};
-                    bookInfo.status = "normal";
-                    bookInfo.result = [];
-
-                    let bookBase = String(schBook).split("div class=bd_list bd_book_list school_lib")[1];
-                    for (let n = 0; n < bookBase.split("bold").length - 1; n++) {
-                        bookInfo.result[n] = {};
-                        bookInfo.schoolName = schName;
-                        bookInfo.schoolCode = schCode;
-
-                        let cls = new classSelector(bookBase);
-                        let title = cls.select("span[class=bold]", n + 1);
-                        let writer = cls.in("div[class=bd_list_writer]", n + 1).select("span[class=dd]", 1);
-                        let company = cls.in("div[class=bd_list_company]", n + 1).select("span[class=dd]", 1);
-                        let canRental = cls.select("div[class=rental_box]", n + 1).toString().indexOf("대출가능") != -1;
-
-                        bookInfo.result[n].title = title;
-                        bookInfo.result[n].writer = writer;
-                        bookInfo.result[n].company = company;
-                        bookInfo.result[n].canRental = canRental;
-
-                    }
-                    if (bookInfo.result[0] == null) {
-                        res.json(createError(schName, schCode, "검색 결과가 없습니다."));
-                        return;
-                    } else {
-                        res.json(bookInfo);
-                        return;
-                    }
-                });
-            });
-        });
-    } catch (e) {
-        res.json(createError(schName, schCode, "검색 결과가 없습니다."));
-        return;
-    }
-});
-
-//에러 만들기
-createError =  function(sc, c, name) {
-    let bookInfo = {};
-    bookInfo.schoolName = sc;
-    bookInfo.schoolCode = c;
-    bookInfo.status = "error";
-    bookInfo.result = name;
-    return bookInfo;
-}
-
-//jsoup selector 짭
-classSelector = function(html) {
-    this.html = html;
-}
-
-classSelector.prototype.select = function(tag, index) {
-    let classname = tag.match(/\[(.*)\]/).pop().replace(/class=/g, "");
-    return this.html.split(classname)[index].split("</" + tag.split("[")[0])[0].trim();
-}
-
-classSelector.prototype.in = function(tag, index) {
-    let classname = tag.match(/\[(.*)\]/).pop().replace(/class=/g, "");
-    return new classSelector(this.html.split(classname)[index]);
-}
