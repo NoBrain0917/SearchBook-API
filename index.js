@@ -1,9 +1,17 @@
-const axios = require("axios").default;
+const axiosModule = require("axios");
 const express = require("express");
 const cheerio = require("cheerio");
 const qs = require("qs");
-const cors = require("cors");
+const https = require("https");
+
 const app = express();
+const axios = axiosModule.create({
+  timeout: 60000,
+  httpsAgent: new https.Agent({
+    rejectUnauthorized: false,
+    keepAlive: true,
+  }),
+});
 
 const area = {
   서울: "http://reading.ssem.or.kr/",
@@ -12,16 +20,17 @@ const area = {
   인천: "http://book.ice.go.kr/",
   광주: "http://book.gen.go.kr/",
   대전: "http://reading.edurang.net/",
-  울산: "http://reading.ulsanedu.kr/",
-  세종: "http://reading.sje.go.kr/",
+  울산: "https://reading.ulsanedu.kr/",
+  세종: "https://reading.sje.go.kr/",
   경기: "https://reading.gglec.go.kr/",
-  강원: "http://reading.gweduone.net/",
+  강원: "https://reading.gweduone.net/",
   충북: "http://reading.cbe.go.kr/",
   충남: "http://reading.edus.or.kr/",
   전북: "https://reading.jbedu.kr/",
   전남: "http://reading.jnei.go.kr/",
   경북: "http://reading.gyo6.net/",
-  경남: "http://reading.gnedu.net/",
+  경남: "https://reading.gne.go.kr/",
+  제주: "https://reading.jje.go.kr/",
 };
 const NO_IMAGE =
   "https://www.epasskorea.com/Public_html/Images/common/noimage.jpg";
@@ -39,7 +48,7 @@ getSchoolFromName = async (local, name) => {
       currentPage: 1,
       returnUrl: "",
       kind: 1,
-      txtSearchWord: encodeURI(name),
+      txtSearchWord: "%EB%8F%84%EC%84%9C%EA%B2%80%EC%83%89",
       searchGbn: "",
       selEducation: "all",
       selSchool: "all",
@@ -54,17 +63,20 @@ getSchoolFromName = async (local, name) => {
 
   let cookie = "";
   cookies.forEach((c) => {
-    cookie += c.substring(0, c.indexOf(" ") + 1);
+    cookie += c.split(";")[0] + "; ";
   });
   cookie = cookie.substring(0, cookie.length - 2);
 
-  if (res.data.includes("0</span>개의"))
+  if (res.data.includes(">0</span>개의"))
     throw new Error(`학교 "${name}"을(를) 찾을 수 없습니다.`);
+
+  let hasTest = res.data.indexOf("테스트");
+  if (hasTest != -1) res.data = res.data.substring(hasTest);
 
   let code = res.data.substring(
     res.data.indexOf("javascript:selectSchool('") + 25
   );
-  code = code.substr(0, code.indexOf("'"));
+  code = code.substring(0, code.indexOf("'"));
 
   let schName = res.data.substring(
     res.data.indexOf("javascript:selectSchool('") + 25
@@ -77,7 +89,7 @@ getSchoolFromName = async (local, name) => {
 setSchoolCodeSetting = async (local, code, cookie) => {
   let option = {
     method: "POST",
-    url: `${area[local]}/r/newReading/search/schoolCodeSetting.jsp`,
+    url: `${area[local]}r/newReading/search/schoolCodeSetting.jsp`,
     data: qs.stringify({
       schoolCode: code,
       returnUrl: "",
